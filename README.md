@@ -1,68 +1,40 @@
----
-title: AI Product Categorizer
-emoji: 🛍️
-colorFrom: blue
-colorTo: purple
-sdk: gradio
-sdk_version: 4.44.0
-app_file: app.py
-pinned: false
+# 🏷️ AI Product Categorizer
+
+An end-to-end, full-stack AI web application built with **FastAPI**, **Google Gemini Vision AI**, and **Tailwind CSS**. The app allows users to upload any product image and instantly extracts a structured title, marketing description, multi-level category path, and visual key-value attributes
 ---
 
-# 🛍️ AI Product Categorizer
+## ✨ Features
 
-Upload a product photo + description, and get back an AI-suggested
-**Category**, **Subcategory**, and **Attributes** — powered by Google Gemini.
+- 📸 **Vision AI Analysis:** Uses Google Gemini 2.5 Flash to visually analyze product images in real time.
+- 📐 **Structured Pydantic Output:** Enforces strict JSON schemas for consistent output parsing:
+  - **Product Title:** Catchy, marketplace-ready title.
+  - **Description:** Concise 2–3 sentence product overview.
+  - **Category Path:** Multi-level taxonomy (`Category > Subcategory`).
+  - **Visual Attributes:** Dynamic key-value extraction (Color, Material, Style, Brand, etc.).
+- ⚡ **Lightweight FastAPI Backend:** Single serverless Python app serving both REST endpoints and frontend.
+- 🎨 **Responsive UI:** Modern, clean user interface styled with Tailwind CSS.
+- ☁️ **Zero-Configuration Deployment:** Configured for seamless, serverless hosting on **Vercel**.
 
-## How it works
+---
 
-1. You upload an image and type a short description.
-2. The app sends both to Gemini with instructions to return structured
-   category data.
-3. The result is parsed and displayed in a clean, readable format.
+## 🛠️ Tech Stack
 
-## Running locally
+- **Backend Framework:** FastAPI / Uvicorn
+- **AI Model:** Google Gemini API (`google-genai` SDK)
+- **Data Validation:** Pydantic v2
+- **Frontend:** HTML5 + Tailwind CSS + Vanilla JS
+- **Deployment & Hosting:** Vercel (Serverless Python Runtime)
 
-```bash
-# 1. Clone this repo
-git clone https://github.com/<your-username>/product-categorizer.git
-cd product-categorizer
+---
 
-# 2. Install dependencies
-pip install -r requirements.txt
+## 📁 Project Structure
 
-# 3. Add your API key
-cp .env.example .env
-# then open .env and paste your real Gemini API key
-
-# 4. Run the app
-python app.py
-```
-
-Get a free Gemini API key at: https://aistudio.google.com/app/apikey
-
-## Deploying on Hugging Face Spaces
-
-1. Go to https://huggingface.co/new-space
-2. Choose **Gradio** as the Space SDK.
-3. Either:
-   - Push this repo's files to the Space's git remote, or
-   - Connect your GitHub repo directly in the Space settings.
-4. In the Space, go to **Settings → Repository secrets** and add:
-   - Name: `GEMINI_API_KEY`
-   - Value: your real Gemini API key
-5. The Space builds automatically and gives you a live URL.
-
-**Important:** Never commit your real `.env` file. Only `.env.example`
-(with a placeholder) should ever be pushed to GitHub or Hugging Face.
-
-## Project structure
-
-```
-product-categorizer/
-├── app.py              # main application
-├── requirements.txt    # Python dependencies
-├── .env.example        # template for required environment variables
-├── .gitignore           # keeps .env and other local files out of git
-└── README.md            # this file
-```
+```text
+ai-product-categorizer/
+├── api/
+│   └── index.py        # Main FastAPI server, Gemini logic, and embedded UI HTML
+├── .env                # Local environment variables (Git ignored)
+├── .gitignore          # Excluded tracking files
+├── README.md           # Project documentation
+├── requirements.txt    # Python package dependencies
+└── vercel.json         # Vercel serverless routing configuration
