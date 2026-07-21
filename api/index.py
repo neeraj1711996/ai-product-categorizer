@@ -47,21 +47,12 @@ async def analyze_product(image: UploadFile = File(...)):
             "4. A list of key visual attributes (e.g., Color, Material, Brand/Logo if visible, Style)."
         )
 
-   response = client.models.generate_content(
-    model='gemini-1.5-flash',  # Switch model here
-    contents=[
-        types.Part.from_bytes(data=contents, mime_type=mime_type),
-        prompt
-    ],
-    config=types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=ProductAnalysis,
-        temperature=0.2,
-    ),
-)
-
-
-            
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                types.Part.from_bytes(data=contents, mime_type=mime_type),
+                prompt
+            ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=ProductAnalysis,
