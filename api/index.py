@@ -48,7 +48,7 @@ async def analyze_product(image: UploadFile = File(...)):
         )
 
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=[
                 types.Part.from_bytes(data=contents, mime_type=mime_type),
                 prompt
