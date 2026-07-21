@@ -1,7 +1,6 @@
 import os
 import json
-import base64
-from typing import Dict, Any, List
+from typing import List, Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -10,14 +9,17 @@ from google.genai import types
 
 app = FastAPI(title="AI Product Categorizer")
 
-# Define the structured output format for the AI model
+# 1. Individual key-value schema for Gemini (bypasses additionalProperties issue)
+class AttributeItem(BaseModel):
+    key: str = Field(description="Attribute name (e.g., Color, Material, Brand, Style)")
+    value: str = Field(description="Attribute value (e.g., Black, Leather, Nike, Casual)")
+
+# 2. Main response schema
 class ProductAnalysis(BaseModel):
     title: str = Field(description="A concise, attractive product title")
     description: str = Field(description="A 2-3 sentence marketing description of the product")
     category: str = Field(description="Main Category > Subcategory (e.g., Electronics > Audio > Headphones)")
-    attributes: Dict[str, str] = Field(
-        description="Key visual attributes as key-value pairs (e.g., Color: Black, Material: Leather)"
-    )
+    attributes: List[AttributeItem] = Field(description="List of observable key visual attributes")
 
 def get_gemini_client():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -37,13 +39,12 @@ async def analyze_product(image: UploadFile = File(...)):
         
         client = get_gemini_client()
 
-        # Prompt for Gemini Vision model
         prompt = (
             "Analyze this product image carefully. Extract and generate:\n"
             "1. An appropriate e-commerce product title.\n"
             "2. A compelling product description.\n"
             "3. The primary category path (e.g., Home & Kitchen > Furniture).\n"
-            "4. A dictionary of observable key attributes (e.g., Color, Material, Brand/Logo if visible, Style)."
+            "4. A list of key visual attributes (e.g., Color, Material, Brand/Logo if visible, Style)."
         )
 
         response = client.models.generate_content(
@@ -59,8 +60,17 @@ async def analyze_product(image: UploadFile = File(...)):
             ),
         )
 
-        # Parse JSON output from Gemini
         result_data = json.loads(response.text)
+        
+        # Convert List[AttributeItem] back into a simple Dict for the UI
+        if isinstance(result_data.get("attributes"), list):
+            attr_dict = {
+                item["key"]: item["value"] 
+                for item in result_data["attributes"] 
+                if isinstance(item, dict) and "key" in item and "value" in item
+            }
+            result_data["attributes"] = attr_dict
+
         return {"success": True, "data": result_data}
 
     except Exception as e:
