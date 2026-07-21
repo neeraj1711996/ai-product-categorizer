@@ -3,6 +3,8 @@
 An end-to-end, full-stack AI web application built with **FastAPI**, **Google Gemini Vision AI**, and **Tailwind CSS**. The app allows users to upload any product image and instantly extracts a structured title, marketing description, multi-level category path, and visual key-value attributes
 ---
 
+Link - https://ai-product-categorizer-git-main-neeraj1711996s-projects.vercel.app/
+
 ## ✨ Features
 
 - 📸 **Vision AI Analysis:** Uses Google Gemini 2.5 Flash to visually analyze product images in real time.
