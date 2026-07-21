@@ -1,220 +1,225 @@
-"""
-AI Product Categorizer
------------------------
-A beginner-friendly app that uses Google's Gemini AI to look at a product
-photo + description, and automatically suggest:
-  - Category
-  - Subcategory
-  - Attributes (material, color, condition, brand, etc.)
-
-Built with Gradio (the web UI) and Google Generative AI (the "brain").
-
-HOW TO RUN LOCALLY:
-    1. pip install -r requirements.txt
-    2. Create a file named ".env" in this same folder with:
-           GEMINI_API_KEY=your-real-key-here
-    3. python app.py
-    4. Open the local URL Gradio prints in your terminal.
-"""
-
 import os
 import json
-import gradio as gr
-import google.generativeai as genai
-from dotenv import load_dotenv
+import base64
+from typing import Dict, Any, List
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
 
-# -----------------------------------------------------------------------
-# STEP 1: Load the API key
-# -----------------------------------------------------------------------
-# load_dotenv() reads a local ".env" file (if it exists) and makes its
-# values available via os.environ. This lets us keep the real key OUT
-# of the code and out of GitHub.
-load_dotenv()
+app = FastAPI(title="AI Product Categorizer")
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Define the structured output format for the AI model
+class ProductAnalysis(BaseModel):
+    title: str = Field(description="A concise, attractive product title")
+    description: str = Field(description="A 2-3 sentence marketing description of the product")
+    category: str = Field(description="Main Category > Subcategory (e.g., Electronics > Audio > Headphones)")
+    attributes: Dict[str, str] = Field(
+        description="Key visual attributes as key-value pairs (e.g., Color: Black, Material: Leather)"
+    )
 
-MODEL_NAME = "gemini-1.5-pro"
+def get_gemini_client():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is missing from environment variables.")
+    return genai.Client(api_key=api_key)
 
-GENERATION_CONFIG = {
-    "temperature": 0.4,          # lower = more consistent/predictable answers
-    "top_p": 0.95,
-    "top_k": 64,
-    "max_output_tokens": 2048,
-    "response_mime_type": "application/json",  # ask Gemini to return JSON directly
-}
-
-# -----------------------------------------------------------------------
-# STEP 2: The instructions we give the AI (the "prompt")
-# -----------------------------------------------------------------------
-# We ask Gemini to always answer in a strict JSON shape, so our app can
-# parse it reliably instead of guessing at free-form text.
-SYSTEM_PROMPT = """
-You are a product categorization engine for an e-commerce / auction
-platform. Given a product's title/description and an image, determine:
-
-1. "categories": one or more high-level categories the item belongs to
-   (e.g. "Furniture", "Electronics", "Jewelry & Watches").
-2. "subcategories": one or more specific subcategories within those
-   categories (e.g. "Writing Desks", "Smartphones", "Wristwatches").
-3. "attributes": a list of relevant attribute objects with "name" and
-   "value" fields, drawn from what's typical for that category
-   (e.g. material, color, brand, condition, era, size, model).
-
-Respond ONLY with valid JSON in exactly this shape, no extra commentary:
-
-{
-  "categories": ["string", ...],
-  "subcategories": ["string", ...],
-  "attributes": [
-    {"name": "string", "value": "string"},
-    ...
-  ]
-}
-
-If something can't be determined from the text/image, use "Unknown" as
-the value rather than guessing wildly.
-"""
-
-
-# -----------------------------------------------------------------------
-# STEP 3: The function that actually talks to Gemini
-# -----------------------------------------------------------------------
-def categorize_product(image_path: str, description: str, api_key_override: str):
-    """
-    Sends the image + description to Gemini and returns a formatted
-    Markdown string with the category, subcategory, and attributes.
-    """
-
-    # --- Basic validation (friendly errors instead of crashes) ---
-    if not image_path:
-        return "⚠️ Please upload a product image first."
-    if not description or not description.strip():
-        return "⚠️ Please enter a product title or description."
-
-    key_to_use = (api_key_override or "").strip() or GEMINI_API_KEY
-    if not key_to_use:
-        return (
-            "❌ No API key found.\n\n"
-            "Either set GEMINI_API_KEY in a .env file (for local use) / "
-            "as a repository secret (on Hugging Face), or paste a key "
-            "into the 'Gemini API Key' box above."
-        )
+@app.post("/api/analyze")
+async def analyze_product(image: UploadFile = File(...)):
+    """API endpoint to receive image, process via Gemini, and return structured product info."""
+    if not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image.")
 
     try:
-        genai.configure(api_key=key_to_use)
+        contents = await image.read()
+        mime_type = image.content_type
+        
+        client = get_gemini_client()
 
-        # Upload the image to Gemini's file service
-        uploaded_file = genai.upload_file(image_path)
-
-        model = genai.GenerativeModel(
-            model_name=MODEL_NAME,
-            generation_config=GENERATION_CONFIG,
+        # Prompt for Gemini Vision model
+        prompt = (
+            "Analyze this product image carefully. Extract and generate:\n"
+            "1. An appropriate e-commerce product title.\n"
+            "2. A compelling product description.\n"
+            "3. The primary category path (e.g., Home & Kitchen > Furniture).\n"
+            "4. A dictionary of observable key attributes (e.g., Color, Material, Brand/Logo if visible, Style)."
         )
 
-        response = model.generate_content(
-            [SYSTEM_PROMPT, f"Product description: {description.strip()}", uploaded_file]
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                types.Part.from_bytes(data=contents, mime_type=mime_type),
+                prompt
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ProductAnalysis,
+                temperature=0.2,
+            ),
         )
 
-        # Gemini was asked to return JSON — parse it so we can format it nicely
-        data = json.loads(response.text)
+        # Parse JSON output from Gemini
+        result_data = json.loads(response.text)
+        return {"success": True, "data": result_data}
 
-        return format_result_as_markdown(data)
-
-    except json.JSONDecodeError:
-        # If parsing fails, just show the raw text so the user still gets something
-        return f"⚠️ Got a response, but couldn't parse it as JSON. Raw output:\n\n{response.text}"
     except Exception as e:
-        return f"❌ Something went wrong: {e}"
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/", response_class=HTMLResponse)
+async def serve_ui():
+    """Serves a modern, clean HTML UI with Tailwind CSS."""
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>AI Product Categorizer</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-slate-50 text-slate-800 min-h-screen py-10 px-4">
+        <div class="max-w-4xl mx-auto">
+            <!-- Header -->
+            <div class="text-center mb-10">
+                <h1 class="text-4xl font-extrabold text-slate-900 mb-2">🏷️ AI Product Categorizer</h1>
+                <p class="text-slate-600">Upload a product image to instantly extract Title, Description, Category, and Attributes.</p>
+            </div>
 
-def format_result_as_markdown(data: dict) -> str:
-    """Turns the parsed JSON result into a clean, readable Markdown block."""
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Upload Section -->
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 text-slate-900">1. Select Product Image</h2>
+                    
+                    <label class="flex flex-col items-center justify-center w-full h-64 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 transition duration-150 overflow-hidden relative">
+                        <div id="upload-placeholder" class="flex flex-col items-center justify-center pt-5 pb-6">
+                            <svg class="w-10 h-10 mb-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                            <p class="mb-2 text-sm text-slate-600 font-medium">Click to upload or drag & drop</p>
+                            <p class="text-xs text-slate-400">PNG, JPG, WEBP</p>
+                        </div>
+                        <img id="image-preview" class="hidden absolute inset-0 w-full h-full object-contain p-2 bg-white" />
+                        <input id="image-input" type="file" accept="image/*" class="hidden" onchange="previewImage(event)" />
+                    </label>
 
-    categories = data.get("categories", [])
-    subcategories = data.get("subcategories", [])
-    attributes = data.get("attributes", [])
+                    <button id="analyze-btn" onclick="analyzeImage()" class="mt-6 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-xl shadow transition duration-150 disabled:opacity-50">
+                        Analyze Image
+                    </button>
+                </div>
 
-    lines = []
-    lines.append("### 🗂️ Category")
-    lines.append(", ".join(categories) if categories else "Unknown")
-    lines.append("")
-    lines.append("### 📁 Subcategory")
-    lines.append(", ".join(subcategories) if subcategories else "Unknown")
-    lines.append("")
-    lines.append("### 🏷️ Attributes")
+                <!-- Results Section -->
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 text-slate-900">2. Extracted Product Information</h2>
+                    
+                    <div id="loading" class="hidden flex-col items-center justify-center py-16 text-indigo-600">
+                        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-3"></div>
+                        <p class="text-sm font-medium text-slate-600">Analyzing image with Gemini Vision AI...</p>
+                    </div>
 
-    if attributes:
-        for attr in attributes:
-            name = attr.get("name", "Unknown")
-            value = attr.get("value", "Unknown")
-            lines.append(f"- **{name}:** {value}")
-    else:
-        lines.append("_No attributes detected._")
+                    <div id="empty-state" class="text-center py-20 text-slate-400 text-sm">
+                        Upload an image and click "Analyze Image" to view extracted details.
+                    </div>
 
-    return "\n".join(lines)
+                    <div id="result-container" class="hidden space-y-5">
+                        <div>
+                            <span class="text-xs font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md" id="res-category">Category</span>
+                            <h3 class="text-xl font-bold text-slate-900 mt-2" id="res-title">Product Title</h3>
+                        </div>
 
+                        <div>
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Description</p>
+                            <p class="text-sm text-slate-700 mt-1 leading-relaxed" id="res-description"></p>
+                        </div>
 
-# -----------------------------------------------------------------------
-# STEP 4: Build the Gradio UI
-# -----------------------------------------------------------------------
-with gr.Blocks(title="AI Product Categorizer", theme=gr.themes.Soft()) as demo:
-    gr.Markdown(
-        """
-        # 🛍️ AI Product Categorizer
-        Upload a product photo and a short description. The AI will
-        suggest a **category**, **subcategory**, and key **attributes**
-        — useful for auction listings, marketplaces, or inventory tagging.
-        """
-    )
+                        <div>
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Attributes</p>
+                            <div class="bg-slate-50 rounded-xl p-3 border border-slate-200 text-sm" id="res-attributes">
+                                <!-- Dynamic key-value pairs -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-    with gr.Row():
-        with gr.Column(scale=1):
-            image_input = gr.Image(
-                type="filepath",
-                label="Product Image",
-                height=320,
-            )
-            description_input = gr.Textbox(
-                label="Product Title / Description",
-                placeholder="e.g. Vintage leather messenger bag, brown, "
-                            "brass buckles, light wear on the strap",
-                lines=5,
-            )
-            api_key_input = gr.Textbox(
-                label="Gemini API Key (optional — only needed if not set as a secret)",
-                placeholder="Leave blank to use the environment/secret key",
-                type="password",
-            )
+        <script>
+            let selectedFile = null;
 
-            with gr.Row():
-                submit_btn = gr.Button("Categorize", variant="primary")
-                clear_btn = gr.Button("Clear")
+            function previewImage(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    selectedFile = file;
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const preview = document.getElementById('image-preview');
+                        preview.src = e.target.result;
+                        preview.classList.remove('hidden');
+                        document.getElementById('upload-placeholder').classList.add('hidden');
+                    }
+                    reader.readAsDataURL(file);
+                }
+            }
 
-        with gr.Column(scale=1):
-            output_box = gr.Markdown(label="Result")
+            async function analyzeImage() {
+                if (!selectedFile) {
+                    alert("Please select an image first!");
+                    return;
+                }
 
-    submit_btn.click(
-        fn=categorize_product,
-        inputs=[image_input, description_input, api_key_input],
-        outputs=output_box,
-    )
+                const btn = document.getElementById('analyze-btn');
+                const loading = document.getElementById('loading');
+                const emptyState = document.getElementById('empty-state');
+                const resultContainer = document.getElementById('result-container');
 
-    clear_btn.click(
-        fn=lambda: (None, "", "", ""),
-        inputs=[],
-        outputs=[image_input, description_input, api_key_input, output_box],
-    )
+                btn.disabled = true;
+                emptyState.classList.add('hidden');
+                resultContainer.classList.add('hidden');
+                loading.classList.remove('hidden');
+                loading.classList.add('flex');
 
-    gr.Markdown(
-        """
-        ---
-        *Powered by Google Gemini. Your API key is only used for this
-        request and is not stored.*
-        """
-    )
+                const formData = new FormData();
+                formData.append('image', selectedFile);
 
-# -----------------------------------------------------------------------
-# STEP 5: Launch
-# -----------------------------------------------------------------------
-if __name__ == "__main__":
-    demo.launch()
+                try {
+                    const response = await fetch('/api/analyze', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const json = await response.json();
+
+                    if (response.ok && json.success) {
+                        const data = json.data;
+                        document.getElementById('res-title').innerText = data.title;
+                        document.getElementById('res-description').innerText = data.description;
+                        document.getElementById('res-category').innerText = data.category;
+
+                        const attrContainer = document.getElementById('res-attributes');
+                        attrContainer.innerHTML = '';
+                        for (const [key, val] of Object.entries(data.attributes)) {
+                            attrContainer.innerHTML += `
+                                <div class="flex justify-between py-1 border-b border-slate-200 last:border-b-0">
+                                    <span class="font-medium text-slate-600">${key}:</span>
+                                    <span class="text-slate-900 font-semibold">${val}</span>
+                                </div>
+                            `;
+                        }
+
+                        resultContainer.classList.remove('hidden');
+                    } else {
+                        alert("Error: " + (json.detail || "Failed to process image."));
+                        emptyState.classList.remove('hidden');
+                    }
+                } catch (err) {
+                    alert("Network error occurred.");
+                    emptyState.classList.remove('hidden');
+                } finally {
+                    btn.disabled = false;
+                    loading.classList.add('hidden');
+                    loading.classList.remove('flex');
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
